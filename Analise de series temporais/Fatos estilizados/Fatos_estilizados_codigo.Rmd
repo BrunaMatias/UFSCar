@@ -1,0 +1,164 @@
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+## Instalação de pacotes 
+
+```{r install, eval=FALSE}
+install.packages('BatchGetSymbols')
+install.packages('rugarch')
+install.packages('ggthemes')
+install.packages('cowplot')
+install.packages('moments')
+install.packages('ggplot2')
+install.packages('tidyverse')
+```
+
+## Carregamento dos pacotes
+
+```{r packages}
+library(BatchGetSymbols)
+library(rugarch)
+library(tidyverse)
+library(ggthemes)
+library(ggplot2)
+library(cowplot)
+library(moments)
+```
+
+## Limpar ambiente
+
+```{r limpar}
+rm(list = ls())
+```
+
+## Seleção de ativos
+
+```{r dados}
+tickers <- c('PETR4.SA', 'VALE3.SA', 'WEGE3.SA', 'EQTL3.SA')
+
+assets <- BatchGetSymbols(tickers = tickers,
+                          first.date = '2014-01-01',
+                          last.date = Sys.Date(),
+                          type.return = "log",
+                          freq.data = "daily")[[2]]
+```
+
+## Gráfico do preço de fechamento ajustado
+
+```{r preco-ajustado, echo=FALSE}
+ggplot(assets, aes(x = ref.date, y = price.adjusted, color = ticker)) +
+  geom_line() +
+  labs(title = "Preços de Fechamento Ajustados (2014-2025)", x = "", y = "Preço Ajustado") +
+  theme_economist() +
+  theme(legend.title = element_blank())
+```
+
+## Gráfico dos retornos diários
+
+```{r retornos, echo=FALSE}
+ggplot(assets, aes(x = ref.date, y = ret.closing.prices, color = ticker)) +
+  geom_line() +
+  labs(title = "Retornos Diários (log) dos Ativos", x = "", y = "Retorno") +
+  theme_economist() +
+  theme(legend.title = element_blank())
+```
+
+## Gráfico da volatilidade 
+
+```{r volatilidade, echo=FALSE}
+ggplot(assets, aes(x = ref.date, y = abs(ret.closing.prices), color = ticker)) +
+  geom_line() +
+  labs(title = "Volatilidade (Retornos Absolutos)", x = "", y = "Retorno Absoluto") +
+  theme_economist() +
+  theme(legend.title = element_blank())
+```
+
+## QQ plot de cada ativo
+
+```{r qqplot, echo=FALSE}
+plots_list <- assets %>% 
+  group_by(ticker) %>%
+  group_split() %>%
+  map(~ggplot(.x, aes(sample = ret.closing.prices)) +
+        stat_qq() + stat_qq_line() +
+        labs(title = paste("QQ Plot -", unique(.x$ticker))) +
+        theme_economist())
+
+cowplot::plot_grid(plotlist = plots_list, nrow = 2)
+```
+
+## Histograma com densidade dos retornos
+
+```{r histograma, echo=FALSE}
+ggplot(assets, aes(x = ret.closing.prices, fill = ticker)) +
+  geom_histogram(aes(y = after_stat(density)), bins = 30, alpha = 0.5, position = "identity", color = "white") +
+  geom_density(alpha = 0.8) +
+  facet_wrap(~ticker, scales = "free") +
+  labs(title = "Histograma e Densidade dos Retornos", x = "Retorno", y = "Densidade") +
+  theme_economist() +
+  theme(legend.position = "none")
+```
+
+## Estatísticas descritivas
+
+```{r estatisticas}
+estatisticas <- assets %>%
+  group_by(ticker) %>%
+  summarise(
+    media = mean(ret.closing.prices, na.rm = TRUE),
+    desvio_padrao = sd(ret.closing.prices, na.rm = TRUE),
+    variancia = var(ret.closing.prices, na.rm = TRUE),
+    curtose = kurtosis(ret.closing.prices, na.rm = TRUE),
+    assimetria = skewness(ret.closing.prices, na.rm = TRUE),
+    n = n()
+  )
+
+estatisticas
+```
+
+## Correlação entre dois ativos
+
+```{r correlacao}
+returns_wide <- assets %>%
+  filter(ticker %in% c('PETR4.SA', 'VALE3.SA')) %>%
+  select(ref.date, ticker, ret.closing.prices) %>%
+  pivot_wider(names_from = ticker, values_from = ret.closing.prices) %>%
+  filter(!is.na(PETR4.SA) & !is.na(VALE3.SA))
+
+correlacao <- cor(returns_wide$PETR4.SA, returns_wide$VALE3.SA)
+paste("Correlação entre PETR4.SA e VALE3.SA:", round(correlacao, 4))
+```
+
+## Gráfico de dispersão entre dois ativos
+
+```{r dispersao}
+ggplot(returns_wide, aes(x = PETR4.SA, y = VALE3.SA)) +
+  geom_point(alpha = 0.3) +
+  geom_smooth(method = "lm", se = FALSE, color = "blue") +
+  labs(title = "Gráfico de Dispersão entre Retornos PETR4.SA e VALE3.SA",
+       x = "Retorno PETR4.SA",
+       y = "Retorno VALE3.SA") +
+  theme_economist()
+```
+
+## Mapa de calor das correlações entre os quatro ativos
+
+```{r heatmap}
+returns_matrix <- assets %>%
+  select(ref.date, ticker, ret.closing.prices) %>%
+  pivot_wider(names_from = ticker, values_from = ret.closing.prices) %>%
+  select(-ref.date) %>%
+  na.omit()
+
+cor_matrix <- cor(returns_matrix)
+cor_long <- as.data.frame(as.table(cor_matrix))
+
+ggplot(cor_long, aes(Var1, Var2, fill = Freq)) +
+  geom_tile() +
+  geom_text(aes(label = round(Freq, 2)), color = "white") +
+  scale_fill_gradient2(low = "red", high = "green", mid = "yellow", midpoint = 0, limit = c(-1,1)) +
+  labs(title = "Mapa de Calor - Correlação dos Ativos") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
